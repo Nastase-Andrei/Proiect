@@ -9,7 +9,12 @@
 #include <ctime>
 #include <cstdlib>
 
+#include <ftxui/component/component.hpp>
+#include <ftxui/component/screen_interactive.hpp>
+#include <ftxui/dom/elements.hpp>
+
 using namespace std;
+using namespace ftxui;
 
 // Formateaza double (100.000000 -> 100)
 string formatMoney(double d)
@@ -78,19 +83,11 @@ public:
 
     double getBalance() const { return balance; }
 
-    // I/O Streams raport in fisier
     void report(ofstream &f) const
     {
         f << type() << " | Sold: " << formatMoney(balance) << "\nTranzactii:\n";
         for (auto &t : history)
             f << " - " << t << "\n";
-    }
-
-    void printHistory() const
-    {
-        cout << type() << " | Sold: " << formatMoney(balance) << "\nTranzactii:\n";
-        for (auto &t : history)
-            cout << " - " << t << "\n";
     }
 };
 
@@ -120,14 +117,14 @@ public:
     string type() const override { return "Curent"; }
 };
 
-// Bank + conturi multiple
+// Bank Singleton
 class Bank
 {
     struct UserData
     {
         string password;
-        vector<int> savings;  // ID-uri conturi economii
-        vector<int> checking; // ID-uri conturi curente
+        vector<int> savings;
+        vector<int> checking;
     };
 
     map<string, UserData> users;
@@ -145,7 +142,6 @@ class Bank
         loadUsers();
     }
 
-    // format: "user": "parola|E:id1,id2;C:id3"
     void loadUsers()
     {
         ifstream f("users.json");
@@ -287,111 +283,150 @@ public:
     }
 };
 
-// Meniu
+// Interfata FTXUI
 int main()
 {
     auto &bank = Bank::get();
+    auto screen = ScreenInteractive::Fullscreen();
+
+    int page = 0;
+    string mesaj = "Bine ai venit!";
+    string username, password, id_str, id2_str, suma_str;
     string loggedInUser;
-    int opt;
 
-    while (true)
+    // Componente input
+    auto input_user = Input(&username, "username");
+    auto input_pass = Input(&password, "parola");
+    auto input_id = Input(&id_str, "id cont");
+    auto input_id2 = Input(&id2_str, "id destinatie");
+    auto input_suma = Input(&suma_str, "suma");
+
+    // Meniu
+    vector<string> entries = {
+        "Register", "Login", "Open Account (Economii)",
+        "Open Account (Curent)", "Deposit", "Withdraw",
+        "Transfer", "Conturile Mele", "Raport", "Exit"};
+    int selected = 0;
+    auto menu = Menu(&entries, &selected);
+
+    // Helper
+    auto clearInputs = [&]
     {
-        cout << "\n=== SIMULATOR BANCAR ===\n"
-             << "1. Register\n2. Login\n3. Open Economii\n"
-             << "4. Open Curent\n5. Deposit\n6. Withdraw\n"
-             << "7. Transfer\n8. Conturile Mele\n9. Raport\n0. Exit\n> ";
-        cin >> opt;
+        username.clear();
+        password.clear();
+        id_str.clear();
+        id2_str.clear();
+        suma_str.clear();
+    };
 
-        try
-        {
-            if (opt == 0)
+    // Buton Executa
+    auto btn_ok = Button("  Executa  ", [&]
+                         {
+        try {
+            int id    = id_str.empty()   ? 0 : stoi(id_str);
+            int id2   = id2_str.empty()  ? 0 : stoi(id2_str);
+            double s  = suma_str.empty() ? 0 : stod(suma_str);
+
+            switch (selected) {
+            case 0:
+                bank.reg(username, password);
+                loggedInUser = username;
+                mesaj = "Inregistrat cu succes! (autentificat automat)";
                 break;
-
-            if (opt == 1)
-            {
-                string u, p;
-                cout << "Username: ";
-                cin >> u;
-                cout << "Parola: ";
-                cin >> p;
-                bank.reg(u, p);
-                loggedInUser = u;
-                cout << "Inregistrat si autentificat!\n";
-            }
-            else if (opt == 2)
-            {
-                string u, p;
-                cout << "Username: ";
-                cin >> u;
-                cout << "Parola: ";
-                cin >> p;
-                bank.login(u, p);
-                loggedInUser = u;
-                cout << "Autentificare reusita!\n";
-            }
-            else if (opt == 3)
-            {
-                cout << "Cont Economii creat, ID: " << bank.openAcc(1, loggedInUser) << "\n";
-            }
-            else if (opt == 4)
-            {
-                cout << "Cont Curent creat, ID: " << bank.openAcc(2, loggedInUser) << "\n";
-            }
-            else if (opt == 5)
-            {
-                int id;
-                double s;
-                cout << "ID cont: ";
-                cin >> id;
-                cout << "Suma: ";
-                cin >> s;
+            case 1:
+                bank.login(username, password);
+                loggedInUser = username;
+                mesaj = "Autentificare reusita!";
+                break;
+            case 2:
+                mesaj = "Cont Economii creat, ID: " + to_string(bank.openAcc(1, loggedInUser));
+                break;
+            case 3:
+                mesaj = "Cont Curent creat, ID: " + to_string(bank.openAcc(2, loggedInUser));
+                break;
+            case 4:
                 bank.getAcc(id)->deposit(s);
-                cout << "Sold: " << formatMoney(bank.getAcc(id)->getBalance()) << "\n";
-            }
-            else if (opt == 6)
-            {
-                int id;
-                double s;
-                cout << "ID cont: ";
-                cin >> id;
-                cout << "Suma: ";
-                cin >> s;
+                mesaj = "Depunere OK! Sold: " + formatMoney(bank.getAcc(id)->getBalance());
+                break;
+            case 5:
                 bank.getAcc(id)->withdraw(s);
-                cout << "Sold: " << formatMoney(bank.getAcc(id)->getBalance()) << "\n";
-            }
-            else if (opt == 7)
-            {
-                int f, t;
-                double s;
-                cout << "De la ID: ";
-                cin >> f;
-                cout << "Catre ID: ";
-                cin >> t;
-                cout << "Suma: ";
-                cin >> s;
-                bank.transfer(f, t, s);
-                cout << "Transfer finalizat!\n";
-            }
-            else if (opt == 8)
-            {
-                if (loggedInUser.empty())
-                    throw BankErr("Nu esti autentificat!");
-                cout << bank.getUserAccounts(loggedInUser) << "\n";
-            }
-            else if (opt == 9)
-            {
-                int id;
-                cout << "ID cont: ";
-                cin >> id;
+                mesaj = "Retragere OK! Sold: " + formatMoney(bank.getAcc(id)->getBalance());
+                break;
+            case 6:
+                bank.transfer(id, id2, s);
+                mesaj = "Transfer finalizat!";
+                break;
+            case 7:
+                if (loggedInUser.empty()) throw BankErr("Trebuie sa fii autentificat!");
+                mesaj = bank.getUserAccounts(loggedInUser);
+                break;
+            case 8:
                 bank.saveReport(id);
-                cout << "Raport salvat!\n";
+                mesaj = "Raport salvat in raport_" + id_str + ".txt";
+                break;
+            case 9:
+                screen.Exit(); return;
             }
+        } catch (exception& e) {
+            mesaj = string("[EROARE] ") + e.what();
         }
-        catch (exception &e)
-        {
-            cout << "[EROARE] " << e.what() << "\n";
-        }
-    }
+        clearInputs();
+        page = 0; });
 
+    // Buton Inapoi
+    auto btn_back = Button("  Inapoi  ", [&]
+                           {
+        clearInputs();
+        page = 0; });
+
+    // Layout
+    auto page_menu = Container::Vertical({menu});
+    auto page_form = Container::Vertical({input_user, input_pass, input_id, input_id2, input_suma,
+                                          Container::Horizontal({btn_ok, btn_back})});
+    auto tab = Container::Tab({page_menu, page_form}, &page);
+
+    // ENTER deschide
+    tab |= CatchEvent([&](Event e)
+                      {
+        if (page == 0 && e == Event::Return) {
+            if (selected == 9) screen.Exit();
+            else page = 1;
+            return true;
+        }
+        return false; });
+
+    // Renderer
+    auto renderer = Renderer(tab, [&]
+                             {
+        Element content;
+
+        if (page == 0) {
+            content = vbox({
+                text("SIMULATOR SISTEM BANCAR") | bold | center,
+                separator(),
+                menu->Render() | vscroll_indicator | frame,
+                separator(),
+                text("Foloseste sagetile + ENTER") | dim | center,
+            });
+        } else {
+            Elements form;
+            form.push_back(text("  " + entries[selected] + "  ") | bold | center);
+            form.push_back(separator());
+
+            if (selected <= 1) { form.push_back(input_user->Render()); form.push_back(input_pass->Render()); }
+            if ((selected >= 4 && selected <= 6) || selected == 8) form.push_back(input_id->Render());
+            if (selected == 6)  form.push_back(input_id2->Render());
+            if (selected >= 4 && selected <= 6) form.push_back(input_suma->Render());
+
+            form.push_back(separator());
+            form.push_back(hbox({btn_ok->Render(), text(" "), btn_back->Render()}) | center);
+
+            content = vbox(form);
+        }
+
+        auto statusColor = mesaj.find("EROARE") != string::npos ? color(Color::Red) : color(Color::Green);
+        return vbox({content | border, text(" Status: " + mesaj) | statusColor}); });
+
+    screen.Loop(renderer);
     return 0;
 }

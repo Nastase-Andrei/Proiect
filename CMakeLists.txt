@@ -8,9 +8,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(math_utils src/math_utils.cpp)
 target_include_directories(math_utils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# ---- FTXUI ----
+include(FetchContent)
+
+FetchContent_Declare(
+    ftxui
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/ftxui.git
+    GIT_TAG        v6.1.9
+)
+FetchContent_MakeAvailable(ftxui)
+
 # ---- Main executable ----
 add_executable(cpp-dev main.cpp)
-target_link_libraries(cpp-dev PRIVATE math_utils)
+
+target_link_libraries(cpp-dev PRIVATE
+    math_utils
+    ftxui::component
+    ftxui::dom
+    ftxui::screen
+)
 
 # ---- Unit Testing with Google Test ----
 include(CTest)
