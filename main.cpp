@@ -61,7 +61,7 @@ public:
     using runtime_error::runtime_error;
 };
 
-// Clasa Account
+// Clase, Polimorfism, Mostenire, Functii Virtuale
 class Account
 {
 protected:
@@ -70,7 +70,7 @@ protected:
 
 public:
     virtual ~Account() = default;
-    virtual void withdraw(double a) = 0;
+    virtual void withdraw(double a) = 0; // functie pur virtuala
     virtual string type() const = 0;
 
     void deposit(double a)
@@ -83,6 +83,7 @@ public:
 
     double getBalance() const { return balance; }
 
+    // I/O Streams export raport in fisier
     void report(ofstream &f) const
     {
         f << type() << " | Sold: " << formatMoney(balance) << "\nTranzactii:\n";
@@ -117,19 +118,19 @@ public:
     string type() const override { return "Curent"; }
 };
 
-// Bank Singleton
+// Singleton + map, set
 class Bank
 {
     struct UserData
     {
         string password;
-        vector<int> savings;
-        vector<int> checking;
+        vector<int> savings;  // ID-uri conturi economii
+        vector<int> checking; // ID-uri conturi curente
     };
 
-    map<string, UserData> users;
-    map<int, unique_ptr<Account>> accounts;
-    set<int> ids;
+    map<string, UserData> users;            // map (autentificare)
+    map<int, unique_ptr<Account>> accounts; // map (conturi)
+    set<int> ids;                           // set (ID-uri unice)
 
     Bank()
     {
@@ -141,6 +142,8 @@ class Bank
         }
         loadUsers();
     }
+
+    // format: "username": "parola|E:id1,id2;C:id3,id4"
 
     void loadUsers()
     {
@@ -210,7 +213,7 @@ public:
     {
         static Bank b;
         return b;
-    }
+    } // Singleton
 
     void reg(const string &u, const string &p)
     {
@@ -284,12 +287,13 @@ public:
 };
 
 // Interfata FTXUI
+
 int main()
 {
     auto &bank = Bank::get();
     auto screen = ScreenInteractive::Fullscreen();
 
-    int page = 0;
+    int page = 0; // 0 = meniu, 1 = formular
     string mesaj = "Bine ai venit!";
     string username, password, id_str, id2_str, suma_str;
     string loggedInUser;
@@ -301,15 +305,48 @@ int main()
     auto input_id2 = Input(&id2_str, "id destinatie");
     auto input_suma = Input(&suma_str, "suma");
 
+    // Enum pentru operatii
+    enum Op
+    {
+        REG,
+        LOGIN,
+        OPEN_SAV,
+        OPEN_CHK,
+        DEP,
+        WDR,
+        XFER,
+        MY_ACC,
+        REPORT,
+        EXIT
+    };
+
     // Meniu
     vector<string> entries = {
         "Register", "Login", "Open Account (Economii)",
         "Open Account (Curent)", "Deposit", "Withdraw",
         "Transfer", "Conturile Mele", "Raport", "Exit"};
     int selected = 0;
-    auto menu = Menu(&entries, &selected);
 
-    // Helper
+    MenuOption menu_opt;
+    menu_opt.entries_option.transform = [](const EntryState &s)
+    {
+        string prefix = s.focused ? "> " : "  ";
+        auto el = text(prefix + s.label) | color(Color::White);
+        if (s.focused)
+            el = el | inverted;
+        return el;
+    };
+    auto menu = Menu(&entries, &selected, menu_opt);
+
+    ButtonOption btn_style;
+    btn_style.transform = [](const EntryState &s)
+    {
+        auto el = text(s.label) | center | color(Color::White);
+        if (s.focused)
+            el = el | inverted;
+        return el | border;
+    };
+
     auto clearInputs = [&]
     {
         username.clear();
@@ -328,56 +365,55 @@ int main()
             double s  = suma_str.empty() ? 0 : stod(suma_str);
 
             switch (selected) {
-            case 0:
+            case REG:
                 bank.reg(username, password);
                 loggedInUser = username;
                 mesaj = "Inregistrat cu succes! (autentificat automat)";
                 break;
-            case 1:
+            case LOGIN:
                 bank.login(username, password);
                 loggedInUser = username;
                 mesaj = "Autentificare reusita!";
                 break;
-            case 2:
+            case OPEN_SAV:
                 mesaj = "Cont Economii creat, ID: " + to_string(bank.openAcc(1, loggedInUser));
                 break;
-            case 3:
+            case OPEN_CHK:
                 mesaj = "Cont Curent creat, ID: " + to_string(bank.openAcc(2, loggedInUser));
                 break;
-            case 4:
+            case DEP:
                 bank.getAcc(id)->deposit(s);
                 mesaj = "Depunere OK! Sold: " + formatMoney(bank.getAcc(id)->getBalance());
                 break;
-            case 5:
+            case WDR:
                 bank.getAcc(id)->withdraw(s);
                 mesaj = "Retragere OK! Sold: " + formatMoney(bank.getAcc(id)->getBalance());
                 break;
-            case 6:
+            case XFER:
                 bank.transfer(id, id2, s);
                 mesaj = "Transfer finalizat!";
                 break;
-            case 7:
+            case MY_ACC:
                 if (loggedInUser.empty()) throw BankErr("Trebuie sa fii autentificat!");
                 mesaj = bank.getUserAccounts(loggedInUser);
                 break;
-            case 8:
+            case REPORT:
                 bank.saveReport(id);
                 mesaj = "Raport salvat in raport_" + id_str + ".txt";
                 break;
-            case 9:
+            case EXIT:
                 screen.Exit(); return;
             }
         } catch (exception& e) {
             mesaj = string("[EROARE] ") + e.what();
         }
         clearInputs();
-        page = 0; });
+        page = 0; }, btn_style);
 
-    // Buton Inapoi
     auto btn_back = Button("  Inapoi  ", [&]
                            {
         clearInputs();
-        page = 0; });
+        page = 0; }, btn_style);
 
     // Layout
     auto page_menu = Container::Vertical({menu});
@@ -385,12 +421,10 @@ int main()
                                           Container::Horizontal({btn_ok, btn_back})});
     auto tab = Container::Tab({page_menu, page_form}, &page);
 
-    // ENTER deschide
     tab |= CatchEvent([&](Event e)
                       {
         if (page == 0 && e == Event::Return) {
-            if (selected == 9) screen.Exit();
-            else page = 1;
+            selected == EXIT ? screen.Exit() : (void)(page = 1);
             return true;
         }
         return false; });
@@ -413,10 +447,15 @@ int main()
             form.push_back(text("  " + entries[selected] + "  ") | bold | center);
             form.push_back(separator());
 
-            if (selected <= 1) { form.push_back(input_user->Render()); form.push_back(input_pass->Render()); }
-            if ((selected >= 4 && selected <= 6) || selected == 8) form.push_back(input_id->Render());
-            if (selected == 6)  form.push_back(input_id2->Render());
-            if (selected >= 4 && selected <= 6) form.push_back(input_suma->Render());
+            bool needUser = (selected <= LOGIN);
+            bool needId   = (selected >= DEP && selected <= XFER) || selected == REPORT;
+            bool needId2  = (selected == XFER);
+            bool needSuma = (selected >= DEP && selected <= XFER);
+
+            if (needUser) { form.push_back(input_user->Render()); form.push_back(input_pass->Render()); }
+            if (needId)   form.push_back(input_id->Render());
+            if (needId2)  form.push_back(input_id2->Render());
+            if (needSuma) form.push_back(input_suma->Render());
 
             form.push_back(separator());
             form.push_back(hbox({btn_ok->Render(), text(" "), btn_back->Render()}) | center);
