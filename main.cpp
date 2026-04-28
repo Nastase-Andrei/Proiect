@@ -2,9 +2,12 @@
 #include <vector>
 #include <map>
 #include <set>
-#include <string>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
+#include <sstream>
+#include <ctime>
+#include <cstdlib>
 
 using namespace std;
 
@@ -16,6 +19,34 @@ string formatMoney(double d)
     if (!s.empty() && s.back() == '.')
         s.pop_back();
     return s;
+}
+
+// Functii helper
+vector<string> split(const string &s, char delim)
+{
+    vector<string> tokens;
+    stringstream ss(s);
+    string tok;
+    while (getline(ss, tok, delim))
+        if (!tok.empty())
+            tokens.push_back(tok);
+    return tokens;
+}
+
+string joinIds(const vector<int> &v)
+{
+    string r;
+    for (size_t i = 0; i < v.size(); i++)
+        r += (i ? "," : "") + to_string(v[i]);
+    return r;
+}
+
+vector<int> parseIds(const string &s)
+{
+    vector<int> r;
+    for (auto &tok : split(s, ','))
+        r.push_back(stoi(tok));
+    return r;
 }
 
 // Error Handling
@@ -46,6 +77,14 @@ public:
     }
 
     double getBalance() const { return balance; }
+
+    // I/O Streams raport in fisier
+    void report(ofstream &f) const
+    {
+        f << type() << " | Sold: " << formatMoney(balance) << "\nTranzactii:\n";
+        for (auto &t : history)
+            f << " - " << t << "\n";
+    }
 
     void printHistory() const
     {
@@ -81,15 +120,94 @@ public:
     string type() const override { return "Curent"; }
 };
 
-// Singleton + STL (map, set)
+// Bank + conturi multiple
 class Bank
 {
-    map<string, string> users;              // username -> parola
-    map<int, unique_ptr<Account>> accounts; // ID -> cont
-    set<int> ids;                           // ID-uri unice
-    int nextId = 1;
+    struct UserData
+    {
+        string password;
+        vector<int> savings;  // ID-uri conturi economii
+        vector<int> checking; // ID-uri conturi curente
+    };
 
-    Bank() {} // constructor privat
+    map<string, UserData> users;
+    map<int, unique_ptr<Account>> accounts;
+    set<int> ids;
+
+    Bank()
+    {
+        srand(time(nullptr));
+        ifstream check("users.json");
+        if (!check)
+        {
+            ofstream("users.json") << "{}\n";
+        }
+        loadUsers();
+    }
+
+    // format: "user": "parola|E:id1,id2;C:id3"
+    void loadUsers()
+    {
+        ifstream f("users.json");
+        string line;
+        while (getline(f, line))
+        {
+            size_t q[4];
+            q[0] = line.find('"');
+            for (int i = 1; i < 4; i++)
+                q[i] = (q[i - 1] != string::npos) ? line.find('"', q[i - 1] + 1) : string::npos;
+            if (q[3] == string::npos)
+                continue;
+
+            string user = line.substr(q[0] + 1, q[1] - q[0] - 1);
+            string val = line.substr(q[2] + 1, q[3] - q[2] - 1);
+
+            size_t pipe = val.find('|');
+            if (pipe == string::npos)
+            {
+                users[user] = {val, {}, {}};
+                continue;
+            }
+
+            string pass = val.substr(0, pipe);
+            vector<int> sav, chk;
+            for (auto &part : split(val.substr(pipe + 1), ';'))
+            {
+                if (part.size() >= 2 && part[1] == ':')
+                {
+                    auto idList = parseIds(part.substr(2));
+                    (part[0] == 'E' ? sav : chk) = idList;
+                }
+            }
+            users[user] = {pass, sav, chk};
+        }
+    }
+
+    void saveUsers()
+    {
+        ofstream f("users.json");
+        f << "{\n";
+        int i = 0, n = users.size();
+        for (auto &[u, d] : users)
+        {
+            f << "  \"" << u << "\": \"" << d.password
+              << "|E:" << joinIds(d.savings)
+              << ";C:" << joinIds(d.checking) << "\"";
+            if (++i < n)
+                f << ",";
+            f << "\n";
+        }
+        f << "}\n";
+        f.flush();
+    }
+
+    int genId()
+    {
+        int id = rand() % 9000 + 1000;
+        while (ids.count(id))
+            id = rand() % 9000 + 1000;
+        return id;
+    }
 
 public:
     static Bank &get()
@@ -102,23 +220,30 @@ public:
     {
         if (users.count(u))
             throw BankErr("Utilizator deja existent!");
-        users[u] = p;
+        users[u] = {p, {}, {}};
+        saveUsers();
     }
 
     void login(const string &u, const string &p)
     {
-        if (!users.count(u) || users[u] != p)
+        if (!users.count(u) || users[u].password != p)
             throw BankErr("Date incorecte!");
     }
 
-    int openAcc(int tip)
+    int openAcc(int tip, const string &user)
     {
+        if (user.empty() || !users.count(user))
+            throw BankErr("Trebuie sa fii autentificat!");
+
+        int id = genId();
         unique_ptr<Account> acc = (tip == 1)
                                       ? static_cast<unique_ptr<Account>>(make_unique<Savings>())
                                       : static_cast<unique_ptr<Account>>(make_unique<Checking>());
-        int id = nextId++;
         accounts[id] = move(acc);
         ids.insert(id);
+
+        (tip == 1 ? users[user].savings : users[user].checking).push_back(id);
+        saveUsers();
         return id;
     }
 
@@ -134,6 +259,32 @@ public:
         getAcc(from)->withdraw(amt);
         getAcc(to)->deposit(amt);
     }
+
+    void saveReport(int id)
+    {
+        ofstream f("raport_" + to_string(id) + ".txt");
+        getAcc(id)->report(f);
+    }
+
+    string getUserAccounts(const string &user)
+    {
+        if (!users.count(user))
+            throw BankErr("Utilizator inexistent!");
+        auto &d = users[user];
+
+        auto listIds = [](const vector<int> &v) -> string
+        {
+            if (v.empty())
+                return "niciun cont";
+            string r;
+            for (size_t i = 0; i < v.size(); i++)
+                r += (i ? ", " : "") + string("ID:") + to_string(v[i]);
+            return r;
+        };
+
+        return "[Economii] " + listIds(d.savings) +
+               " | [Curente] " + listIds(d.checking);
+    }
 };
 
 // Meniu
@@ -148,7 +299,7 @@ int main()
         cout << "\n=== SIMULATOR BANCAR ===\n"
              << "1. Register\n2. Login\n3. Open Economii\n"
              << "4. Open Curent\n5. Deposit\n6. Withdraw\n"
-             << "7. Transfer\n8. Sold\n0. Exit\n> ";
+             << "7. Transfer\n8. Conturile Mele\n9. Raport\n0. Exit\n> ";
         cin >> opt;
 
         try
@@ -180,11 +331,11 @@ int main()
             }
             else if (opt == 3)
             {
-                cout << "Cont Economii creat, ID: " << bank.openAcc(1) << "\n";
+                cout << "Cont Economii creat, ID: " << bank.openAcc(1, loggedInUser) << "\n";
             }
             else if (opt == 4)
             {
-                cout << "Cont Curent creat, ID: " << bank.openAcc(2) << "\n";
+                cout << "Cont Curent creat, ID: " << bank.openAcc(2, loggedInUser) << "\n";
             }
             else if (opt == 5)
             {
@@ -223,10 +374,17 @@ int main()
             }
             else if (opt == 8)
             {
+                if (loggedInUser.empty())
+                    throw BankErr("Nu esti autentificat!");
+                cout << bank.getUserAccounts(loggedInUser) << "\n";
+            }
+            else if (opt == 9)
+            {
                 int id;
                 cout << "ID cont: ";
                 cin >> id;
-                bank.getAcc(id)->printHistory();
+                bank.saveReport(id);
+                cout << "Raport salvat!\n";
             }
         }
         catch (exception &e)
